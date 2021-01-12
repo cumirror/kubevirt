@@ -28,7 +28,6 @@ require (
 
 replace (
 	github.com/Azure/go-autorest => github.com/Azure/go-autorest v11.0.0+incompatible
-	github.com/go-kit/kit => github.com/go-kit/kit v0.3.0
 	github.com/googleapis/gnostic => github.com/googleapis/gnostic v0.3.1
 	github.com/openshift/api => github.com/openshift/api v0.0.0-20191219222812-2987a591a72c
 	github.com/openshift/client-go => github.com/openshift/client-go v0.0.0-20191125132246-f6563a70e19a

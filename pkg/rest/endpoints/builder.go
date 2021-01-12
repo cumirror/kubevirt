@@ -24,7 +24,6 @@ import (
 
 	"github.com/go-kit/kit/endpoint"
 	kithttp "github.com/go-kit/kit/transport/http"
-	"golang.org/x/net/context"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"kubevirt.io/client-go/precond"
@@ -32,7 +31,7 @@ import (
 )
 
 type HandlerBuilder interface {
-	Build(context.Context) *kithttp.Server
+	Build() *kithttp.Server
 	Post(interface{}) HandlerBuilder
 	Put(interface{}) HandlerBuilder
 	Patch() HandlerBuilder
@@ -51,7 +50,7 @@ type handlerBuilder struct {
 	decoder    kithttp.DecodeRequestFunc
 }
 
-func (h *handlerBuilder) Build(ctx context.Context) *kithttp.Server {
+func (h *handlerBuilder) Build() *kithttp.Server {
 	precond.MustNotBeNil(h.endpoint)
 	precond.MustNotBeNil(h.encoder)
 	precond.MustNotBeNil(h.decoder)
@@ -63,7 +62,6 @@ func (h *handlerBuilder) Build(ctx context.Context) *kithttp.Server {
 	}
 
 	return kithttp.NewServer(
-		ctx,
 		endpoint,
 		h.decoder,
 		h.encoder,

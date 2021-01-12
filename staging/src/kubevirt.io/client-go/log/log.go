@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/go-kit/kit/log"
+	"github.com/go-kit/kit/log/level"
 	"github.com/golang/glog"
 	flag "github.com/spf13/pflag"
 	v1 "k8s.io/api/core/v1"
@@ -48,18 +49,11 @@ const (
 type LogLevel int32
 
 const (
-	INFO LogLevel = iota
+	DEBUG LogLevel = iota
+	INFO
 	WARNING
 	ERROR
-	FATAL
 )
-
-var LogLevelNames = map[LogLevel]string{
-	INFO:    "info",
-	WARNING: "warning",
-	ERROR:   "error",
-	FATAL:   "fatal",
-}
 
 var lock sync.Mutex
 
@@ -69,10 +63,9 @@ type LoggableObject interface {
 }
 
 type FilteredLogger struct {
-	logContext            *log.Context
-	component             string
-	filterLevel           LogLevel
-	currentLogLevel       LogLevel
+	logger    log.Logger
+	component string
+
 	verbosityLevel        int
 	currentVerbosityLevel int
 	err                   error
@@ -83,7 +76,7 @@ var Log = DefaultLogger()
 func InitializeLogging(comp string) {
 	defaultComponent = comp
 	Log = DefaultLogger()
-	glog.CopyStandardLogTo(LogLevelNames[INFO])
+	glog.CopyStandardLogTo("info")
 	goflag.CommandLine.Set("component", comp)
 	goflag.CommandLine.Set("logtostderr", "true")
 }
@@ -101,17 +94,13 @@ func getDefaultVerbosity() int {
 
 // Wrap a go-kit logger in a FilteredLogger. Not cached
 func MakeLogger(logger log.Logger) *FilteredLogger {
-	defaultLogLevel := INFO
-
 	defaultVerbosity = getDefaultVerbosity()
 	// This verbosity will be used for info logs without setting a custom verbosity level
 	defaultCurrentVerbosity := 2
 
 	return &FilteredLogger{
-		logContext:            log.NewContext(logger),
+		logger:                level.NewFilter(logger, level.AllowInfo()),
 		component:             defaultComponent,
-		filterLevel:           defaultLogLevel,
-		currentLogLevel:       defaultLogLevel,
 		verbosityLevel:        defaultVerbosity,
 		currentVerbosityLevel: defaultCurrentVerbosity,
 	}
@@ -152,12 +141,12 @@ func DefaultLogger() *FilteredLogger {
 // SetIOWriter is meant to be used for testing. "log" and "glog" logs are sent to /dev/nil.
 // KubeVirt related log messages will be sent to this writer
 func (l *FilteredLogger) SetIOWriter(w io.Writer) {
-	l.logContext = log.NewContext(log.NewJSONLogger(w))
+	l.logger = log.NewJSONLogger(w)
 	goflag.CommandLine.Set("logtostderr", "false")
 }
 
 func (l *FilteredLogger) SetLogger(logger log.Logger) *FilteredLogger {
-	l.logContext = log.NewContext(logger)
+	l.logger = logger
 	return l
 }
 
@@ -185,26 +174,24 @@ func (l FilteredLogger) log(skipFrames int, params ...interface{}) error {
 	// messages should be logged if any of these conditions are met:
 	// The log filtering level is info and verbosity checks match
 	// The log message priority is warning or higher
-	if l.currentLogLevel >= WARNING || (l.filterLevel == INFO &&
-		(l.currentLogLevel == l.filterLevel) &&
-		(l.currentVerbosityLevel <= l.verbosityLevel)) {
+	if l.currentVerbosityLevel <= l.verbosityLevel {
 		now := time.Now().UTC()
 		_, fileName, lineNumber, _ := runtime.Caller(skipFrames)
 		logParams := make([]interface{}, 0, 8)
 
 		logParams = append(logParams,
-			"level", LogLevelNames[l.currentLogLevel],
 			"timestamp", now.Format("2006-01-02T15:04:05.000000Z"),
 			"pos", fmt.Sprintf("%s:%d", filepath.Base(fileName), lineNumber),
 			"component", l.component,
 		)
 		if l.err != nil {
-			l.logContext = l.logContext.With("reason", l.err)
+			l.logger = log.With(l.logger, "reason", l.err)
 		}
-		return l.logContext.WithPrefix(logParams...).Log(params...)
+		return log.WithPrefix(l.logger, logParams...).Log(params...)
 	}
 	return nil
 }
+
 func (l FilteredLogger) Key(key string, kind string) *FilteredLogger {
 	if key == "" {
 		return &l
@@ -262,21 +249,29 @@ func (l FilteredLogger) ObjectRef(obj *v1.ObjectReference) *FilteredLogger {
 }
 
 func (l *FilteredLogger) With(obj ...interface{}) *FilteredLogger {
-	l.logContext = l.logContext.With(obj...)
+	l.logger = log.With(l.logger, obj...)
 	return l
 }
 
 func (l *FilteredLogger) WithPrefix(obj ...interface{}) *FilteredLogger {
-	l.logContext = l.logContext.WithPrefix(obj...)
+	l.logger = log.WithPrefix(l.logger, obj...)
 	return l
 }
 
 func (l *FilteredLogger) SetLogLevel(filterLevel LogLevel) error {
-	if (filterLevel >= INFO) && (filterLevel <= FATAL) {
-		l.filterLevel = filterLevel
-		return nil
+	switch filterLevel {
+	case DEBUG:
+		l.logger = level.NewFilter(l.logger, level.AllowDebug())
+	case INFO:
+		l.logger = level.NewFilter(l.logger, level.AllowInfo())
+	case WARNING:
+		l.logger = level.NewFilter(l.logger, level.AllowWarn())
+	case ERROR:
+		l.logger = level.NewFilter(l.logger, level.AllowError())
+	default:
+		return fmt.Errorf("Log level %d does not exist", filterLevel)
 	}
-	return fmt.Errorf("Log level %d does not exist", filterLevel)
+	return nil
 }
 
 func (l *FilteredLogger) SetVerbosityLevel(level int) error {
@@ -302,42 +297,62 @@ func (l FilteredLogger) Reason(err error) *FilteredLogger {
 	return &l
 }
 
-func (l FilteredLogger) Level(level LogLevel) *FilteredLogger {
-	l.currentLogLevel = level
+func (l FilteredLogger) Level(loglevel LogLevel) *FilteredLogger {
+	switch loglevel {
+	case DEBUG:
+		l.logger = level.Debug(l.logger)
+	case INFO:
+		l.logger = level.Info(l.logger)
+	case WARNING:
+		l.logger = level.Warn(l.logger)
+	case ERROR:
+		l.logger = level.Error(l.logger)
+	default:
+		l.logger = level.Info(l.logger)
+	}
 	return &l
 }
 
 func (l FilteredLogger) Info(msg string) {
-	l.Level(INFO).msg(msg)
+	l.logger = level.Info(l.logger)
+	l.msg(msg)
 }
 
 func (l FilteredLogger) Infof(msg string, args ...interface{}) {
-	l.Level(INFO).msgf(msg, args...)
+	l.logger = level.Info(l.logger)
+	l.msgf(msg, args...)
 }
 
 func (l FilteredLogger) Warning(msg string) {
-	l.Level(WARNING).msg(msg)
+	l.logger = level.Warn(l.logger)
+	l.msg(msg)
 }
 
 func (l FilteredLogger) Warningf(msg string, args ...interface{}) {
-	l.Level(WARNING).msgf(msg, args...)
+	l.logger = level.Warn(l.logger)
+	l.msgf(msg, args...)
 }
 
 func (l FilteredLogger) Error(msg string) {
-	l.Level(ERROR).msg(msg)
+	l.logger = level.Error(l.logger)
+	l.msg(msg)
 }
 
 func (l FilteredLogger) Errorf(msg string, args ...interface{}) {
-	l.Level(ERROR).msgf(msg, args...)
+	l.logger = level.Error(l.logger)
+	l.msgf(msg, args...)
 }
 
 func (l FilteredLogger) Critical(msg string) {
-	l.Level(FATAL).msg(msg)
+	l.logger = level.Error(l.logger)
+	l.msg(msg)
 	panic(msg)
 }
 
 func (l FilteredLogger) Criticalf(msg string, args ...interface{}) {
-	l.Level(FATAL).msgf(msg, args...)
+	l.logger = level.Error(l.logger)
+	l.msgf(msg, args...)
+	panic(msg)
 }
 
 func LogLibvirtLogLine(logger *FilteredLogger, line string) {
@@ -349,7 +364,7 @@ func LogLibvirtLogLine(logger *FilteredLogger, line string) {
 	fragments := strings.SplitN(line, ": ", 5)
 	if len(fragments) < 4 {
 		now := time.Now()
-		logger.logContext.Log(
+		logger.logger.Log(
 			"level", "info",
 			"timestamp", now.Format("2006-01-02T15:04:05.000000Z"),
 			"component", logger.component,
@@ -383,7 +398,7 @@ func LogLibvirtLogLine(logger *FilteredLogger, line string) {
 
 	if !isPos {
 		msg = strings.TrimSpace(fragments[3] + ": " + fragments[4])
-		logger.logContext.Log(
+		logger.logger.Log(
 			"level", severity,
 			"timestamp", t.Format("2006-01-02T15:04:05.000000Z"),
 			"component", logger.component,
@@ -392,7 +407,7 @@ func LogLibvirtLogLine(logger *FilteredLogger, line string) {
 			"msg", msg,
 		)
 	} else {
-		logger.logContext.Log(
+		logger.logger.Log(
 			"level", severity,
 			"timestamp", t.Format("2006-01-02T15:04:05.000000Z"),
 			"pos", pos,
@@ -424,7 +439,7 @@ func LogQemuLogLine(logger *FilteredLogger, line string) {
 	}
 
 	now := time.Now()
-	logger.logContext.Log(
+	logger.logger.Log(
 		"level", "info",
 		"timestamp", now.Format("2006-01-02T15:04:05.000000Z"),
 		"component", logger.component,

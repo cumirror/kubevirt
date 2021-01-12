@@ -122,7 +122,7 @@ var _ = Describe("LibvirtHelper", func() {
 		buffer := bytes.NewBuffer(nil)
 
 		kubevirtlog.InitializeLogging("test")
-		logger := log.NewContext(log.NewJSONLogger(buffer))
+		logger := log.With(log.NewJSONLogger(buffer))
 		klog := kubevirtlog.MakeLogger(logger)
 
 		scanner := bufio.NewScanner(strings.NewReader(logs))
@@ -161,7 +161,7 @@ var _ = Describe("LibvirtHelper", func() {
 		buffer := bytes.NewBuffer(nil)
 
 		kubevirtlog.InitializeLogging("virt-launcher")
-		logger := log.NewContext(log.NewJSONLogger(buffer))
+		logger := log.With(log.NewJSONLogger(buffer))
 		klog := kubevirtlog.MakeLogger(logger)
 
 		scanner := bufio.NewScanner(strings.NewReader(qemuLogs))

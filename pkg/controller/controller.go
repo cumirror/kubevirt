@@ -70,7 +70,7 @@ func NewListWatchFromClient(c cache.Getter, resource string, namespace string, f
 
 func HandlePanic() {
 	if r := recover(); r != nil {
-		log.Log.Level(log.FATAL).Log("stacktrace", debug.Stack(), "msg", r)
+		log.Log.Level(log.ERROR).Log("stacktrace", debug.Stack(), "msg", r)
 	}
 }
 
